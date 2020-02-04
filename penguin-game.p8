@@ -164,21 +164,49 @@ function draw_thing(t)
   spr(t.sprite, t.x, t.y, t.width, t.height, t.flip)
 end
 
-function draw_background(level)
+function background_drawer(level)
+  local ymax
+  local y_clock
+  local particles = {}
+  function y_offset(pos, max)
+    if pos >= max then return  pos - max else return pos end
+  end
+  function snow(x, y)
+    x = x+ cam_x + (sin(clock.v) * 10)
+    y = y_offset(y + y_clock, ymax)
+    circfill(x, y, 1, 5)
+    pset(x, y, 7)
+  end
   if level == 1 then
-    rectfill(0 + cam_x,124, 127 + cam_x, 127, 9)
-    fillp(0b0101101001011010.1)
-    rectfill(0 + cam_x,117, 127 + cam_x, 127, 9)
-    rectfill(0 + cam_x,108, 127 + cam_x, 116, 8)
-    rectfill(0 + cam_x,100, 127 + cam_x, 107, 2)
-    rectfill(0 + cam_x,92, 127 + cam_x, 99, 1)
-    circfill(99 + cam_x, 32, 12, 5)
-    circfill(99 + cam_x, 32, 8, 6)
-    fillp()
-    pset(10+ cam_x, 20, 7)
-    pset(88+ cam_x, 44, 7)
-    pset(64+ cam_x, 64, 7)
-    pset(36+ cam_x, 58, 7)
+    ymax = 103
+    return function()
+      local q = flr(rnd(2))
+      local row = {}
+      for i = 1, q do
+        row[i] = {rnd(128), 1 - rnd(2)}
+      end
+      if #particles == ymax then del(particles, particles[1]) end
+      add(particles, row)
+      rectfill(0 + cam_x,123 + cam_y, 127 + cam_x, 127 + cam_y, 7)
+      rectfill(0 + cam_x,118 + cam_y, 127 + cam_x, 122 + cam_y, 9)
+      circfill(99 + cam_x, 24, 8, 7)
+      --fillp(0b0101101001011010.1)
+      fillp(0b0100000110000010.1)
+      rectfill(0 + cam_x,110 + cam_y, 127 + cam_x, 118 + cam_y, 12)
+      rectfill(0 + cam_x,101 + cam_y, 127 + cam_x, 110 + cam_y, 1)
+      circfill(99 + cam_x, 24, 6, 6)
+      circfill(99 + cam_x, 24, 4, 5)
+      fillp()
+      circfill(91 + cam_x, 21, 10, 0)
+      y_clock = clock.v * ymax
+      local l = #particles
+      for i = l, 1, -1 do
+        for flake in all(particles[i]) do
+          flake[1] = flake[1] + flake[2]
+          snow(flake[1], l - i)
+        end
+      end
+    end
   end
 end
 
@@ -202,6 +230,8 @@ function start_game()
   add(baddies, make_baddie(64, 64, badguys.crab))
   cam_x = 0
   cam_y = 0
+  clock = {v = 0, max = 1, inc = 0.01}
+  draw_background = background_drawer(1)
 end
 
 function update_game()
@@ -209,18 +239,20 @@ function update_game()
   for b in all(baddies) do
     b.update()
   end
+  clock.v += clock.inc
+  if clock.v >= clock.max then clock.v = 0 end
 end
 
 function focus_camera(thing)
   cam_x = min( max(thing.x - 64 + ((thing.width * 8) / 2), 0), 112 * 8)
-  cam_y = max(thing.y - 100, 0)
+  cam_y = max(thing.y - 82, 0)
 end
 
 function draw_game()
   cls()
   focus_camera(penguin)
   camera(cam_x,cam_y)
-  draw_background(1)
+  draw_background()
   map(0, 0, 0, 0, 128, 64)
   draw_thing(penguin)
   foreach(baddies, draw_thing)
