@@ -2,6 +2,9 @@ pico-8 cartridge // http://www.pico-8.com
 version 16
 __lua__
 
+_gravity_val = 0.25
+_terminal_vel = 4
+
 function player_input()
   return {left = btn(0), right = btn(1), up = btn(2), down = btn(3), fire1 = btn(4), fire2 = btn(5)}
 end
@@ -29,7 +32,7 @@ function make_baddie(x, y, bg, inp)
   b.bounds = bg.bounds
   b.states = bg.states
   b.state = bg.states.idle
-  b.sprite = b.state[1]
+  b.sprite = b.state.frames[1]
   b.tick = 0
   b.flip = false
   b.update = function()
@@ -43,7 +46,12 @@ end
 
 function make_penguin(x, y, lives, input_func)
   local p = {x = x, y = y, lives = lives}
-  p.states = {idle = {0}, walking = {0,32,32,32,0,0,0,34,34,34,0,0}, jumping={0,2,2,2,4,4,4,0,0}}
+  p.states = {
+    idle = {frames = {0}, modifiers = {}, precludes = {}},
+    walking = {frames = {0,32,32,32,0,0,0,34,34,34,0,0}, modifiers = {}, precludes = {}},
+    jumping={frames = {0,2,2,2,4,4,4,0,0}, modifiers = {}, precludes = {}},
+    sliding={frames = {36,36,36,52,52,52}, on_end = function() p.vy = -2 p.y = p.y - 8 end, modifiers = {height = 1, bounds = {0,7,3,7}}, precludes = {walking = true, sliding = true, jumping = true}}
+    }
   p.width = 2
   p.height = 2
   p.bounds = {3,11,2,15}
@@ -54,7 +62,7 @@ function make_penguin(x, y, lives, input_func)
   p.maxvx = 2
   p.state = p.states.idle
   p.tick = 0
-  p.sprite = p.state[1]
+  p.sprite = p.state.frames[1]
   p.flip = false
   p.rejump = true
   p.update = function()
@@ -65,16 +73,34 @@ function make_penguin(x, y, lives, input_func)
     jumping_char(p, ip)
     apply_friction(p, ip)
     moving_char(p, ip)
+    sliding_char(p, ip)
     end
   return p
 end
 
+function get_state(thing, prop)
+  if thing.state.modifiers[prop] != null then
+    return thing.state.modifiers[prop]
+  else
+    return thing[prop]
+  end
+end
+
+function set_state(thing, new_state)
+  if thing.state == thing.states[new_state] then return end
+  if thing.state.on_end != null then
+    thing.state.on_end(thing)
+  end
+  thing.state = thing.states[new_state]
+end
+
 function apply_gravity(thing)
-  thing.vy = min(thing.vy + 0.25, 4)
+  thing.vy = min(thing.vy + _gravity_val, _terminal_vel)
 end
 
 function apply_friction(thing)
-  local mpoint = mget((thing.x + ((thing.bounds[1] + thing.bounds[2]) / 2) ) / 8, (thing.y + thing.bounds[4] + 1) / 8)
+  local bounds = get_state(thing, 'bounds')
+  local mpoint = mget((thing.x + ((bounds[1] + bounds[2]) / 2) ) / 8, (thing.y + bounds[4] + 1) / 8)
   if mpoint == 0 or thing.vx == 0 then return end
   if fget(mpoint, 1) then
     if thing.vx > 0 then thing.vx -= 0.01 else thing.vx += 0.01 end
@@ -83,53 +109,68 @@ function apply_friction(thing)
   end
 end
 
-function is_on_suface(thing)
-  --if thing.vy < 0 then return false end
-  local mpoint1 = mget(((thing.x + thing.bounds[1] + 1 ) / 8), (thing.y + thing.bounds[4] + 1) / 8)
-  local mpoint2 = mget(((thing.x + thing.bounds[2] - 1 ) / 8), (thing.y + thing.bounds[4] + 1) / 8)
+function is_on_surface(thing)
+  local bounds = get_state(thing, 'bounds')
+  local mpoint1 = mget(((thing.x + bounds[1] + 1 ) / 8), (thing.y + bounds[4] + 1) / 8)
+  local mpoint2 = mget(((thing.x + bounds[2] - 1 ) / 8), (thing.y + bounds[4] + 1) / 8)
   --local mpoint = mget((thing.x + ((thing.bounds[1] + thing.bounds[2]) / 2) ) / 8, (thing.y + thing.bounds[4] + 1) / 8)
   if fget(mpoint1, 0) or fget(mpoint2, 0) then return true else return false end
 end
 
 function under_surface(thing)
-  local mpoint1 = mget(((thing.x + thing.bounds[1] ) / 8), (thing.y + thing.bounds[3] - 1) / 8)
-  local mpoint2 = mget(((thing.x + thing.bounds[2] ) / 8), (thing.y + thing.bounds[3] - 1) / 8)
+  local bounds = get_state(thing, 'bounds')
+  local mpoint1 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[3] - 1) / 8)
+  local mpoint2 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[3] - 1) / 8)
   if fget(mpoint1, 0) or fget(mpoint2, 0) then return true else return false end
 end
 
 function side_collide(thing)
   if thing.x < 0 or thing.x > 1024 then return true end
-  local mpoint1 = mget(((thing.x + thing.bounds[1] ) / 8), (thing.y + thing.bounds[3]) / 8)
-  local mpoint2 = mget(((thing.x + thing.bounds[1] ) / 8), (thing.y + thing.bounds[4] - 1) / 8)
-  local mpoint3 = mget(((thing.x + thing.bounds[2] ) / 8), (thing.y + thing.bounds[3]) / 8)
-  local mpoint4 = mget(((thing.x + thing.bounds[2] ) / 8), (thing.y + thing.bounds[4] - 1) / 8)
+  local bounds = get_state(thing, 'bounds')
+  local mpoint1 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[3]) / 8)
+  local mpoint2 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[4] - 1) / 8)
+  local mpoint3 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[3]) / 8)
+  local mpoint4 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[4] - 1) / 8)
   if fget(mpoint1, 0) or fget(mpoint2, 0) or fget(mpoint3, 0) or fget(mpoint4, 0) then return true else return false end
 end
 
 function walking_char(thing, input)
-  --if not is_on_suface(thing) and thing.vy > thing.jump_power-1 then return end
+  if thing.state.precludes.walking then return end
   if input.left then
     thing.vx = max(thing.vx - thing.accx, -thing.maxvx)
     thing.flip = true
-    if thing.vy == 0 then thing.state = thing.states.walking end
+    if thing.vy == 0 then set_state(thing, 'walking') end
   end
   if input.right then
     thing.flip = false
     thing.vx = min(thing.vx + thing.accx, thing.maxvx)
-    if thing.vy == 0 then thing.state = thing.states.walking end
+    if thing.vy == 0 then set_state(thing, 'walking') end
   end
 end
 
 function jumping_char(thing, input)
+  if thing.state.precludes.jumping then return end
   if input.fire1 then 
-    if is_on_suface(thing) then
+    if is_on_surface(thing) then
+      thing.rejump = true
       thing.vy = thing.jump_power
     end
     if thing.rejump and thing.vy > -0.5 and thing.vy < 0.5 then
       thing.vy = thing.jump_power
       thing.rejump = false
     end
-    thing.state = thing.states.jumping
+    set_state(thing, 'jumping')
+  end
+end
+
+function sliding_char(thing, input)
+  if thing.vx < 1 and thing.state == thing.states.sliding then
+    set_state(thing, 'idle')
+  end
+  if thing.state.precludes.sliding then return end
+  if input.fire2 and abs(thing.vx) > 1 and thing.vy >= _terminal_vel - 1 then
+    set_state(thing, 'sliding')
+    thing.vx = thing.vx * 1.2
   end
 end
 
@@ -138,11 +179,13 @@ function moving_char(thing)
   local c_y = thing.y
   thing.x += thing.vx
   thing.y += thing.vy
-  if thing.vy >= 0 then
-    if is_on_suface(thing) then
+  if thing.vy > 0 then
+    if is_on_surface(thing) then
       thing.vy = 0
-      thing.y = flr(thing.y / 8) * 8
-      thing.rejump = true
+      thing.y = c_y
+      while is_on_surface(thing) == false do
+        thing.y +=1
+      end
     end
   else 
     if under_surface(thing) then
@@ -156,18 +199,19 @@ function moving_char(thing)
   end
   if abs(thing.vx) < 0.12 then thing.vx = 0 end
   if thing.vx == 0 and thing.vy == 0 then
-    thing.state = thing.states.idle
+    set_state(thing, 'idle')
   end
 end
 
 function animate(thing)
   thing.tick +=1
-  if thing.tick > #thing.state then thing.tick = 1 end
-  thing.sprite = thing.state[thing.tick]
+  if thing.tick > #thing.state.frames then thing.tick = 1 end
+  thing.sprite = thing.state.frames[thing.tick]
 end
 
 function draw_thing(t)
-  spr(t.sprite, t.x, t.y, t.width, t.height, t.flip)
+  local height = get_state(t, 'height')
+  spr(t.sprite, t.x, t.y, t.width, height, t.flip)
 end
 
 function background_drawer(level)
@@ -220,7 +264,7 @@ end
 
 badguys = {
   crab = {
-    states = {idle={78, 78, 78, 79, 79, 79}, walking={78, 78, 78, 79, 79, 79}},
+    states = {idle={frames = {78, 78, 78, 79, 79, 79}, modifiers = {}, precludes = {}}, walking={frames = {78, 78, 78, 79, 79, 79}, modifiers = {}, precludes = {}}},
     health = 1,
     input=simple_mover_input,
     updaters = {animate, walking_char, apply_gravity, apply_friction, moving_char},
@@ -231,7 +275,7 @@ badguys = {
     bounds = {0, 7, 3, 7}
   },
   brb = {
-    states = {idle = {94}, walking={94}},
+    states = {idle = {frames = {94}, modifiers = {}, precludes = {}}, walking={frames = {94}, modifiers = {}, precludes = {}}},
     health =1,
     input = restricted_mover_input,
     updaters = {walking_char, moving_char},
@@ -290,7 +334,7 @@ function draw_game()
 end
 
 function debug()
-  if is_on_suface(penguin) then print("is on surface!") end
+  if is_on_surface(penguin) then print("is on surface!") end
 end
 
 function _init()
@@ -340,14 +384,14 @@ c6ccdccd66666666cdcdcdcc00000000000000000000000000000000000000000000000000000000
 dccddcddccccccccdcdddcdc00000000000000000000000000000000000000000000000000000000000000000000000000000000000000008888888888888888
 ddd1dd1dddddddddddd1dddd00000000000000000000000000000000000000000000000000000000000000000000000000000000000000008282282882822828
 11111111111111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000002020020220200202
-c677776c0cccccc00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000155100000000
-c677776ccc6666cc0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000015555550067600
-c677777cc667766c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005556771760
-c677776cc677776c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025222f6666669999
-c777776cc677776c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005555f666f5500494
-c677776cc677776c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000990555550000000
-c677777cc677776c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000900000000000000
-c677776cc677776c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+c677776c0cccccc05005050500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000155100000000
+c677776ccc6666cc0050050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000015555550067600
+c677776cc667766c0500550500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005556771760
+c677776cc677776c00050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025222f6666669999
+c677776cc677776c5050050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005555f666f5500494
+c677776cc677776c5000050500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000990555550000000
+c677776cc677776c0005000500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000900000000000000
+c677776cc677776c0500505000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00007777777777777777700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00776767676766676767770000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 07767676666666666676777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -376,8 +420,8 @@ __map__
 0000000000415100000000000000510000000000000000000000000000000000000000000000006070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000005000000000004141500000000000000000000000000000000000000000000000607000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 4240000000005000000000000000500000000000000000000000000000000000000000606161700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000005040000000000000500000000000000000000000000000000000000060707171000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000005000000000004040500000000000000000000000000000000000606170000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000041415000000000000000500000000000000000000000000000000060717100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000005000000000000000500000000000000000006061620000606170000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000005040000000000000500000000000000000000000000000000000000060705252000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000005000000000004040500000000000000000000000000000000000606170007270000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000041415000000000000000500000000000000000000000000000000060705200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000005000000000000000500000000000000000006061620000606170520000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 4042404240424140414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414100004042
