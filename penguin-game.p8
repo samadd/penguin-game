@@ -27,8 +27,22 @@ function restricted_mover_input(x,y,d)
   end
 end
 
+function chased_input(b)
+  if abs(b.x - penguin.x) > 42 then return {} end
+  local i = {}
+  if b.x >= penguin.x then 
+    if b.x < 1020 then i.right = true else i.left = true end
+  else
+    if b.x > 0 then i.left = true else i.right = true end
+  end
+  if flr(rnd(100)) == 42 then i.fire1 = true end
+  return i
+end
+
 function make_baddie(x, y, bg, inp)
   local b = {x = x, y = y, health = bg.health, height = bg.height, width=bg.width, vx = 0, vy = 0, accx = bg.accx, maxvx = bg.maxvx, solid = bg.solid}
+  b.z_shift = bg.z_shift
+  b.jump_power = bg.jump_power
   b.bounds = bg.bounds
   b.states = bg.states
   b.state = bg.states.idle
@@ -45,7 +59,7 @@ function make_baddie(x, y, bg, inp)
 end
 
 function make_penguin(x, y, lives, input_func)
-  local p = {x = x, y = y, lives = lives}
+  local p = {x = x, y = y, lives = lives, health = 4}
   p.states = {
     idle = {frames = {0}, modifiers = {}, precludes = {}},
     walking = {frames = {0,32,32,32,0,0,0,34,34,34,0,0}, modifiers = {}, precludes = {}},
@@ -66,6 +80,7 @@ function make_penguin(x, y, lives, input_func)
   p.sprite = p.state.frames[1]
   p.flip = false
   p.rejump = true
+  p.immune = 0
   p.update = function()
     local ip = input_func()
     animate(p)
@@ -75,6 +90,7 @@ function make_penguin(x, y, lives, input_func)
     apply_friction(p, ip)
     moving_char(p, ip)
     sliding_char(p, ip)
+    p.immune = max(p.immune - 1, 0)
     end
   return p
 end
@@ -126,13 +142,27 @@ function under_surface(thing)
 end
 
 function side_collide(thing)
-  if thing.x < 0 or thing.x > 1024 then return true end
+  if thing.x < 0 or thing.x > 1020 then return true end
   local bounds = get_state(thing, 'bounds')
   local mpoint1 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[3]) / 8)
   local mpoint2 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[4] - 1) / 8)
   local mpoint3 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[3]) / 8)
   local mpoint4 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[4] - 1) / 8)
   if fget(mpoint1, 0) or fget(mpoint2, 0) or fget(mpoint3, 0) or fget(mpoint4, 0) then return true else return false end
+end
+
+function char_collide(thing, group)
+  local hit_things = {}
+  local box_1 = get_state(thing, 'bounds')
+  box_1 = {box_1[1] + thing.x, box_1[2] + thing.x, box_1[3] + thing.y, box_1[4] + thing.y}
+  local box_2
+  for t in all(group) do
+    box_2 = get_state(t, 'bounds')
+    box_2 = {box_2[1] + t.x, box_2[2] + t.x, box_2[3] + t.y, box_2[4] + t.y}
+    if box_1[1] < box_2[2] and box_1[2] > box_2[1] and box_1[3] < box_2[4] and box_1[4] > box_2[3]
+    then add(hit_things, t) end
+  end
+  return hit_things
 end
 
 function walking_char(thing, input)
@@ -196,7 +226,7 @@ function moving_char(thing)
         thing.vy = -(thing.vy / 2)
       end
     end
-    if side_collide(thing) then
+    if thing.z_shift != true and side_collide(thing) then
       local diff = thing.x - c_x
       diff = abs(diff) / diff
       thing.x = c_x
@@ -212,6 +242,16 @@ function moving_char(thing)
   end
 end
 
+function do_collisions()
+  local hits = char_collide(penguin, baddies)
+  if penguin.immune == 0 and #hits > 0 then
+    if penguin.health > 0 then penguin.immune = 60
+    else
+      die()
+    end
+  end
+end
+
 function animate(thing)
   thing.tick +=1
   if thing.tick > #thing.state.frames then thing.tick = 1 end
@@ -220,7 +260,9 @@ end
 
 function draw_thing(t)
   local height = get_state(t, 'height')
-  spr(t.sprite, t.x, t.y, t.width, height, t.flip)
+  local draw = true
+  if t.immune !=null and t.immune > 0 then draw = t.immune%2 == 0 end
+  if draw then spr(t.sprite, t.x, t.y, t.width, height, t.flip) end
 end
 
 function background_drawer(level)
@@ -280,7 +322,7 @@ badguys = {
     width = 1,
     height = 1,
     accx = 0.5,
-    maxvx = 1.5,
+    maxvx = 2,
     bounds = {0, 7, 3, 7},
     solid = true
   },
@@ -294,11 +336,26 @@ badguys = {
     accx = 0.5,
     maxvx = 2,
     bounds = {0, 15, 0, 6}
+  },
+  panda = {
+    states = {idle = {frames = {110}, modifiers = {}, precludes = {}}, walking={frames = {110}, modifiers = {}, precludes = {}}, jumping={frames = {110}, modifiers = {}, precludes = {}}},
+    health = 1,
+    input = simple_mover_input,
+    updaters = {walking_char, jumping_char, apply_gravity, apply_friction, moving_char},
+    width = 2,
+    height = 2,
+    accx = 0.5,
+    maxvx = 2,
+    jump_power = -2,
+    bounds = {2, 14, 1, 15},
+    z_shift = true,
+    solid = true
   }
 }
 
 levels = {
   {baddies = {
+    {x = 50, y= 74, t = badguys.panda, input = chased_input},
     {x = 64, y = 64, t = badguys.crab, input = simple_mover_input},
     {x = 134, y = 64, t = badguys.crab, input = simple_mover_input},
     {x = 264, y = 96, t = badguys.crab, input = simple_mover_input},
@@ -321,11 +378,17 @@ function start_game()
   draw_background = background_drawer(1)
 end
 
+function restart()
+  penguin.x = 15
+  penguin.y = -32
+end
+
 function update_game()
   penguin.update()
   for b in all(baddies) do
     b.update()
   end
+  do_collisions()
   clock.v += clock.inc
   if clock.v >= clock.max then clock.v = 0 end
 end
@@ -344,6 +407,24 @@ function draw_game()
   draw_thing(penguin)
   foreach(baddies, draw_thing)
   --debug()
+end
+
+function die()
+  for i = 0,1,0.05 do
+    cls()
+    draw_background()
+    map(0,0,0,0,128,64)
+    penguin.x -= i * 10
+    penguin.y += (sin(i) * 10) + (i * 10)
+    draw_thing(penguin)
+    foreach(baddies, draw_thing)
+    flip()
+  end
+  print("oh no!", 32 + cam_x, 32)
+  for i = 0,30 do
+    flip()
+  end
+  restart()
 end
 
 function debug()
