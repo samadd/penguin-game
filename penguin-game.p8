@@ -5,6 +5,12 @@ __lua__
 _gravity_val = 0.25
 _terminal_vel = 4
 
+function destroyer_of_things(b, set)
+  b.solid = false
+  b.dead = true
+  b.update = function() animate(b) apply_gravity(b) moving_char(b) if b.y > cam_y + 128 then del(set, b) end end
+end
+
 function player_input()
   return {left = btn(0), right = btn(1), up = btn(2), down = btn(3), fire1 = btn(4), fire2 = btn(5)}
 end
@@ -49,12 +55,14 @@ function make_baddie(x, y, bg, inp)
   b.sprite = b.state.frames[1]
   b.tick = 0
   b.flip = false
+  b.destroy = destroyer_of_things
   b.update = function()
     local ip = inp(b)
     for f in all(bg.updaters) do
       f(b, ip)
     end
   end
+  b.destroy = bg.destroy
   return b
 end
 
@@ -64,7 +72,7 @@ function make_penguin(x, y, lives, input_func)
     idle = {frames = {0}, modifiers = {}, precludes = {}},
     walking = {frames = {0,32,32,32,0,0,0,34,34,34,0,0}, modifiers = {}, precludes = {}},
     jumping={frames = {0,2,2,2,4,4,4,0,0}, modifiers = {}, precludes = {}},
-    sliding={frames = {36,36,36,52,52,52}, on_end = function() p.vy = -2 p.y = p.y - 8 end, modifiers = {height = 1, bounds = {0,7,3,7}}, precludes = {walking = true, sliding = true, jumping = true}}
+    sliding={frames = {36,36,36,52,52,52}, on_end = function() p.vy = -2 p.y = p.y - 8 end, modifiers = {height = 1, bounds = {0,15,3,7}}, precludes = {walking = true, sliding = true, jumping = true}}
     }
   p.solid = true
   p.width = 2
@@ -80,6 +88,8 @@ function make_penguin(x, y, lives, input_func)
   p.sprite = p.state.frames[1]
   p.flip = false
   p.rejump = true
+  p.canfire = 0
+  p.waitfire = 15
   p.immune = 0
   p.update = function()
     local ip = input_func()
@@ -87,12 +97,37 @@ function make_penguin(x, y, lives, input_func)
     walking_char(p, ip)
     apply_gravity(p, ip)
     jumping_char(p, ip)
+    shooting_char(p, ip)
     apply_friction(p, ip)
     moving_char(p, ip)
     sliding_char(p, ip)
     p.immune = max(p.immune - 1, 0)
     end
   return p
+end
+
+function make_snowball(x,y,dir)
+  local s = {x = x, y = y, vx = dir * 2.5, width = 1, height = 1, solid = true, vy = 0, accx = 1 , maxvx = 2.5}
+  s.bounds = {2,6, 2, 6}
+  s.states = {idle={frames = {38}, modifiers={}, precludes = {}}, walking={frames = {38}, modifiers={}, precludes = {}}}
+  s.state = s.states.idle
+  s.tick = 0
+  s.sprite = s.state.frames[1]
+  s.update = function()
+    s.tick += 1
+    if s.tick > 45 then destroyer_of_things(s) end
+    local ip = simple_mover_input(s)
+    walking_char(s, ip)
+    apply_gravity(s, ip)
+    apply_friction(s)
+    moving_char(s)
+    local hits = char_collide(s, baddies)
+    if #hits > 0 then
+      destroyer_of_things(s)
+      destroyer_of_things(hits[1])
+    end
+  end
+  return s
 end
 
 function get_state(thing, prop)
@@ -143,12 +178,20 @@ end
 
 function side_collide(thing)
   if thing.x < 0 or thing.x > 1020 then return true end
+  return side_collide_left(thing) or side_collide_right(thing)
+end
+
+function side_collide_left(thing)
   local bounds = get_state(thing, 'bounds')
   local mpoint1 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[3]) / 8)
-  local mpoint2 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[4] - 1) / 8)
+  local mpoint2 = mget(((thing.x + bounds[1] ) / 8), (thing.y + bounds[4]) / 8)
+  return fget(mpoint1, 0) or fget(mpoint2, 0)
+end
+function side_collide_right(thing)
+  local bounds = get_state(thing, 'bounds')
   local mpoint3 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[3]) / 8)
-  local mpoint4 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[4] - 1) / 8)
-  if fget(mpoint1, 0) or fget(mpoint2, 0) or fget(mpoint3, 0) or fget(mpoint4, 0) then return true else return false end
+  local mpoint4 = mget(((thing.x + bounds[2] ) / 8), (thing.y + bounds[4]) / 8)
+  return fget(mpoint3, 0) or fget(mpoint4, 0)
 end
 
 function char_collide(thing, group)
@@ -157,12 +200,26 @@ function char_collide(thing, group)
   box_1 = {box_1[1] + thing.x, box_1[2] + thing.x, box_1[3] + thing.y, box_1[4] + thing.y}
   local box_2
   for t in all(group) do
-    box_2 = get_state(t, 'bounds')
-    box_2 = {box_2[1] + t.x, box_2[2] + t.x, box_2[3] + t.y, box_2[4] + t.y}
-    if box_1[1] < box_2[2] and box_1[2] > box_2[1] and box_1[3] < box_2[4] and box_1[4] > box_2[3]
-    then add(hit_things, t) end
+    if not t.dead then
+      box_2 = get_state(t, 'bounds')
+      box_2 = {box_2[1] + t.x, box_2[2] + t.x, box_2[3] + t.y, box_2[4] + t.y}
+      if box_1[1] < box_2[2] and box_1[2] > box_2[1] and box_1[3] < box_2[4] and box_1[4] > box_2[3]
+      then add(hit_things, t) end
+    end
   end
   return hit_things
+end
+
+function bomp_hit(a, b)
+  if b.dead then return false end
+  local bounds_a = get_state(a, 'bounds')
+  local bounds_b = get_state(b, 'bounds')
+  local point_a = a.y + bounds_a[4]
+  if point_a >= b.y + bounds_b[3] and point_a < b.y + bounds_b[4] then
+    return true
+  else
+    return false
+  end
 end
 
 function walking_char(thing, input)
@@ -194,12 +251,23 @@ function jumping_char(thing, input)
   end
 end
 
+function shooting_char(thing, input)
+  thing.canfire = max(0, thing.canfire - 1)
+  if thing.state.precludes.shooting then return end
+  if input.fire2 and thing.canfire == 0 then
+    local x, dir
+    if thing.flip then x = thing.x - 2 dir = -1 else x = thing.x + 8 dir = 1 end
+    add(projectiles, make_snowball(x, thing.y + 4, dir))
+    thing.canfire = thing.waitfire
+  end
+end
+
 function sliding_char(thing, input)
   if abs(thing.vx) < 0.5 and thing.state == thing.states.sliding then
     set_state(thing, 'idle')
   end
   if thing.state.precludes.sliding then return end
-  if input.fire2 and abs(thing.vx) > 1 and thing.vy >= _terminal_vel - 1 then
+  if input.down and abs(thing.vx) > 1 and thing.vy >= 2 then
     set_state(thing, 'sliding')
     local dir = abs(thing.vx) / thing.vx
     thing.vx = dir * max(abs(thing.vx) * 1.2, thing.maxvx)
@@ -227,11 +295,11 @@ function moving_char(thing)
       end
     end
     if thing.z_shift != true and side_collide(thing) then
-      local diff = thing.x - c_x
-      diff = abs(diff) / diff
       thing.x = c_x
-      if side_collide(thing) then
-        thing.x -= thing.vx
+      if side_collide_left(thing) then
+        thing.x += 1
+      else if side_collide_right(thing) then
+        thing.x -=1 end
       end
       thing.vx = -(thing.vx * 0.25)
     end
@@ -244,10 +312,23 @@ end
 
 function do_collisions()
   local hits = char_collide(penguin, baddies)
-  if penguin.immune == 0 and #hits > 0 then
-    if penguin.health > 0 then penguin.immune = 60
-    else
-      die()
+  local hitcount = 0
+  if #hits > 0 then
+    if penguin.vy > _gravity_val then
+      for hit in all(hits) do
+        if bomp_hit(penguin, hit) or penguin.state == penguin.states.sliding then
+          hitcount += 1
+          destroyer_of_things(hit, baddies)
+        end
+      end
+    end
+    if hitcount > 0 then penguin.vy = -(penguin.vy / 2) end
+    if penguin.immune > 0 then return end
+    if hitcount < #hits then
+      if penguin.health > 0 then penguin.immune = 60
+      else
+        die()
+      end
     end
   end
 end
@@ -322,7 +403,7 @@ badguys = {
     width = 1,
     height = 1,
     accx = 0.5,
-    maxvx = 2,
+    maxvx = 1.5,
     bounds = {0, 7, 3, 7},
     solid = true
   },
@@ -334,7 +415,7 @@ badguys = {
     width = 2,
     height = 1,
     accx = 0.5,
-    maxvx = 2,
+    maxvx = 1.75,
     bounds = {0, 15, 0, 6}
   },
   panda = {
@@ -361,7 +442,7 @@ levels = {
     {x = 264, y = 96, t = badguys.crab, input = simple_mover_input},
     {x = 424, y = 96, t = badguys.crab, input = simple_mover_input},
     {x = 120, y = 32, t = badguys.brb, input = restricted_mover_input(120, 32, 32)},
-    {x = 334, y = 49, t = badguys.brb, input = restricted_mover_input(120, 32, 32)}
+    {x = 128, y = 49, t = badguys.brb, input = restricted_mover_input(128, 49, 32)}
     }
   }
 }
@@ -369,6 +450,7 @@ levels = {
 function start_game()
   penguin = make_penguin(15, -32, 5, player_input)
   baddies = {}
+  projectiles = {}
   for b in all(levels[1].baddies) do
     add(baddies, make_baddie(b.x, b.y, b.t, b.input))
   end
@@ -388,6 +470,9 @@ function update_game()
   for b in all(baddies) do
     b.update()
   end
+  for p in all(projectiles) do
+    p.update()
+  end
   do_collisions()
   clock.v += clock.inc
   if clock.v >= clock.max then clock.v = 0 end
@@ -406,6 +491,7 @@ function draw_game()
   map(0, 0, 0, 0, 128, 64)
   draw_thing(penguin)
   foreach(baddies, draw_thing)
+  foreach(projectiles, draw_thing)
   --debug()
 end
 
@@ -456,10 +542,10 @@ __gfx__
 00000049994000000000049910940000000049900094000000555500000000000000000000000000000000000000000000000000000000000000000000000000
 00000001200000000000000001200000000100000000120000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000011110000000000000011110000000111000001111000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000116110000000000000116110000000012111001611000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000111110000000000000111110000040111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000111499000000000000111499000090111167611149900000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000011110000000000000011110000009111777711111000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000116110000000000000116110000000012111001611000566500000000000000000000000000000000000000000000000000000000000000000000000000
+00000111110000000000000111110000040111111111111000677600000000000000000000000000000000000000000000000000000000000000000000000000
+00000111499000000000000111499000090111167611149900677600000000000000000000000000000000000000000000000000000000000000000000000000
+00000011110000000000000011110000009111777711111000566500000000000000000000000000000000000000000000000000000000000000000000000000
 00000011110000000000001111000000001117777611000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000111110000000000011111000000499116775000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00001211165000000000121116500000000000000000120000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -512,7 +598,7 @@ __map__
 0000000000000000000000000000000000000000000000000000000000414141414141414200000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050000041414141414400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000060614041414141000000000050000000000000005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000414400000000000000000000000000000000000000000000000000000000000000006070525252525252000000000050000000000000005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000004300000000000000000000000000000000000000000000000000000000000000006070525252525252000000000050000000000000005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000005000000000004341414144000000000000000000000000000000000000000000607052717171717170000000000053414141414100005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 4240000000005000000000000000500000000000000000000000000000000000000000606161705271000000606161620000000000000000000000005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000005040000000000000500000000000000000000000000000000000000060705252527100000060705252726200000000000000000000005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
